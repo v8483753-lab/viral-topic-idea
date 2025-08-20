@@ -5,19 +5,19 @@ import altair as alt
 from datetime import datetime, timedelta
 from functools import lru_cache
 
-# --- YouTube API endpoints ---
+# YouTube API endpoints
 YOUTUBE_SEARCH_URL   = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_VIDEO_URL    = "https://www.googleapis.com/youtube/v3/videos"
 YOUTUBE_CHANNEL_URL  = "https://www.googleapis.com/youtube/v3/channels"
 
-# --- Your API Key ---
+# Your API Key
 API_KEY = "AIzaSyAeMNLtJxQwsIlk8Z99TyrC9Xvo6DRDbf8"
 
-# --- Streamlit setup ---
+# Streamlit setup
 st.set_page_config(page_title="Viral Topics Dashboard", layout="wide")
 st.title("📈 YouTube Viral Topics Dashboard")
 
-# --- Sidebar: filters & keywords ---
+# Sidebar: filters & keywords
 st.sidebar.header("Search & Filter Settings")
 days      = st.sidebar.slider("Search Past Days", 1, 30, value=7)
 min_views = st.sidebar.number_input("Min Views", min_value=0, value=1000, step=500)
@@ -31,7 +31,7 @@ keywords = st.sidebar.text_area(
     value="Affair Relationship Stories\nReddit Relationship Advice\nCheating Story Real"
 ).splitlines()
 
-# --- Hashable cache wrapper ---
+# Hashable cache wrapper
 @lru_cache(maxsize=128)
 def fetch_json(url: str, params_tuple: tuple):
     params = dict(params_tuple)
@@ -39,7 +39,7 @@ def fetch_json(url: str, params_tuple: tuple):
     resp.raise_for_status()
     return resp.json()
 
-# --- Core data-fetching function ---
+# Core data-fetching function
 def get_results(keywords: list, api_key: str, days: int) -> pd.DataFrame:
     cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat("T") + "Z"
     rows = []
@@ -56,20 +56,15 @@ def get_results(keywords: list, api_key: str, days: int) -> pd.DataFrame:
             if not vid_id:
                 continue
 
-            # Video stats
             stats = fetch_json(
                 YOUTUBE_VIDEO_URL,
                 tuple(sorted({"part": "statistics", "id": vid_id, "key": api_key}.items()))
             )
-
-            # Video snippet (publish date, channelId)
             snip = fetch_json(
                 YOUTUBE_VIDEO_URL,
                 tuple(sorted({"part": "snippet", "id": vid_id, "key": api_key}.items()))
             )
             ch_id = snip["items"][0]["snippet"]["channelId"]
-
-            # Channel stats & info
             ch_data = fetch_json(
                 YOUTUBE_CHANNEL_URL,
                 tuple(sorted({"part": "statistics,snippet", "id": ch_id, "key": api_key}.items()))
@@ -95,47 +90,55 @@ def get_results(keywords: list, api_key: str, days: int) -> pd.DataFrame:
 
     return pd.DataFrame(rows)
 
-# --- Main App Logic ---
+# Main App Logic
 if st.button("Fetch & Analyze"):
     with st.spinner("Fetching data…"):
         df = get_results(keywords, API_KEY, days)
 
     if df.empty:
         st.warning("No videos matched your criteria.")
-    else:
-        # Apply filters
-        df = df[df.Views >= min_views]
-        df = df[df.Subscribers <= max_subs]
+        st.stop()
 
-        # Sort
-        df = df.sort_values(by=sort_by, ascending=ascending)
+    # Apply filters
+    df = df[df.Views >= min_views]
+    df = df[df.Subscribers <= max_subs]
 
-        # Show dataframe without URL columns
-        st.dataframe(df.drop(columns=["VideoURL", "ChannelURL"]), height=400)
+    # Sort
+    df = df.sort_values(by=sort_by, ascending=ascending)
 
-        # Prepare CSV with Excel hyperlinks
-        export_df = df.copy()
-        export_df["Title"]   = export_df.apply(
-            lambda r: f'=HYPERLINK("{r.VideoURL}", "{r.Title}")', axis=1
+    # Display summary table (without raw URLs)
+    st.dataframe(df.drop(columns=["VideoURL", "ChannelURL"]), height=400)
+
+    # Display clickable links below the table
+    st.markdown("### 🔗 Video & Channel Links")
+    for _, row in df.iterrows():
+        st.markdown(
+            f"- **{row['Title']}**  \n"
+            f"  • [Watch Video ▶️]({row['VideoURL']})  \n"
+            f"  • [Channel 👤]({row['ChannelURL']})"
         )
-        export_df["Channel"] = export_df.apply(
-            lambda r: f'=HYPERLINK("{r.ChannelURL}", "{r.Channel}")', axis=1
-        )
-        # Drop raw URL columns
-        export_df = export_df.drop(columns=["VideoURL", "ChannelURL"])
 
-        csv = export_df.to_csv(index=False)
-        st.download_button("Download CSV with Links", csv, "viral_topics_with_links.csv", "text/csv")
+    # CSV Export (with Excel hyperlinks)
+    export_df = df.copy()
+    export_df["Title"]   = export_df.apply(
+        lambda r: f'=HYPERLINK("{r.VideoURL}", "{r.Title}")', axis=1
+    )
+    export_df["Channel"] = export_df.apply(
+        lambda r: f'=HYPERLINK("{r.ChannelURL}", "{r.Channel}")', axis=1
+    )
+    export_df = export_df.drop(columns=["VideoURL", "ChannelURL"])
+    csv = export_df.to_csv(index=False)
+    st.download_button("Download CSV with Links", csv, "viral_topics_with_links.csv", "text/csv")
 
-        # Render bar chart
-        chart = (
-            alt.Chart(df)
-            .mark_bar()
-            .encode(
-                x=alt.X(sort_by, sort=alt.SortField(sort_by, order="descending")),
-                y=alt.Y("Title", sort="-x"),
-                color="Keyword"
-            )
-            .properties(width=700, height=400)
+    # Bar chart
+    chart = (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X(sort_by, sort=alt.SortField(sort_by, order="descending")),
+            y=alt.Y("Title", sort="-x"),
+            color="Keyword"
         )
-        st.altair_chart(chart)
+        .properties(width=700, height=400)
+    )
+    st.altair_chart(chart)
